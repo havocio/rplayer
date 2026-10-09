@@ -1,0 +1,32 @@
+[package]
+name = "player-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Format-pluggable lossless audio playback engine (rodio + symphonia) for rplayer"
+
+[lib]
+name = "player_core"
+path = "src/lib.rs"
+
+[features]
+default = []
+# FLAC / WAV / ALAC / MP3 / AAC / OGG / Opus work out of the box via rodio's
+# bundled pure-Rust symphonia decoders — no feature gate, no C dependency.
+#
+# Opt-in exotic formats that need an EXTRA decoder crate (grows the binary):
+ape = ["dep:ape-decoder"]        # Monkey's Audio (.ape), pure Rust
+wavpack = []                     # WavPack (.wv) — see README, needs a .wv reader
+
+[dependencies]
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+rodio = "0.22.2"
+lofty = { version = "0.24.0", features = ["serde"] }
+ape-decoder = { version = "0.3.2", optional = true }
+
+[dev-dependencies]
+tempfile = "3"

@@ -1,0 +1,23 @@
+[workspace]
+resolver = "2"
+members = ["crates/player-core", "src-tauri"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.89"
+authors = ["rplayer"]
+license = "MIT"
+repository = "https://example.invalid/rplayer"
+
+# Shared, size-conscious release profile (per skill: avoid bloat, strip symbols)
+[profile.release]
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[profile.dev]
+# Keep incremental dev builds reasonable with audio crates
+opt-level = 0

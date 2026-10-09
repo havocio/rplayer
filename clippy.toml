@@ -1,0 +1,5 @@
+# Clippy configuration
+msrv = "1.89"
+# A 24KB stack frame is plenty for an audio/UI app; avoids noisy too_many_lines churn.
+# Keep cognitive complexity sane without fighting the borrow checker.
+too-many-arguments-threshold = 8

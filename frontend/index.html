@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>rplayer</title>
+  </head>
+  <body>
+    <div id="app">
+      <!-- Sidebar: queue / library -->
+      <aside id="sidebar">
+        <header class="side-head">
+          <div class="brand">
+            <span class="logo" aria-hidden="true"></span>
+            <h1>rplayer</h1>
+          </div>
+          <div class="add-btns">
+            <button id="add-files" class="chip" title="添加文件">＋ 文件</button>
+            <button id="add-folder" class="chip" title="添加文件夹">＋ 文件夹</button>
+          </div>
+        </header>
+        <div class="queue-meta">
+          <span id="queue-count">0 首</span>
+          <button id="clear-queue" class="ghost" title="清空队列">清空</button>
+        </div>
+        <ul id="playlist" class="playlist" tabindex="0"></ul>
+      </aside>
+
+      <!-- Main: now playing -->
+      <main id="main">
+        <section class="now">
+          <div class="cover-wrap">
+            <div id="cover" class="cover" data-empty="true">
+              <div class="cover-fallback" aria-hidden="true">♪</div>
+            </div>
+          </div>
+          <div class="now-text">
+            <div id="np-title" class="np-title">未选择曲目</div>
+            <div id="np-artist" class="np-artist">—</div>
+            <div id="np-album" class="np-album">—</div>
+            <div id="np-tags" class="np-tags"></div>
+          </div>
+        </section>
+
+        <section class="transport">
+          <div class="seek-row">
+            <span id="time-cur" class="time">0:00</span>
+            <input id="seek" class="range seek" type="range" min="0" max="100" value="0" step="0.1" />
+            <span id="time-dur" class="time">0:00</span>
+          </div>
+
+          <div class="controls">
+            <button id="btn-mode" class="ctrl-sec" title="播放模式">
+              <span id="mode-icon"></span>
+            </button>
+            <button id="btn-prev" class="ctrl" title="上一首">⏮</button>
+            <button id="btn-play" class="ctrl play" title="播放 / 暂停">▶</button>
+            <button id="btn-next" class="ctrl" title="下一首">⏭</button>
+            <div class="vol">
+              <button id="btn-mute" class="ctrl-sec" title="静音">🔊</button>
+              <input id="volume" class="range vol-range" type="range" min="0" max="100" value="100" step="1" />
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

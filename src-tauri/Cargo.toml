@@ -1,0 +1,36 @@
+[package]
+name = "rplayer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "rplayer — a modern, tiny lossless music player (Tauri v2)"
+
+[lib]
+name = "rplayer_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+path = "src/lib.rs"
+
+[[bin]]
+name = "rplayer"
+path = "src/main.rs"
+
+[features]
+# Tauri needs this for release builds (embedding the frontend assets).
+custom-protocol = ["tauri/custom-protocol"]
+# Toggle Monkey's Audio (.ape) support through to the engine.
+ape = ["player-core/ape"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# The audio engine. Enable `ape` by default for the app so the formats the user
+# asked for actually play out of the box. (Grows the binary ~a few hundred KB.)
+player-core = { path = "../crates/player-core", features = ["ape"] }
