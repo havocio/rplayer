@@ -90,28 +90,38 @@ body {
 .ghost:hover { color: var(--text); background: var(--panel-2); }
 .meta-actions { display: flex; gap: 2px; }
 
-.playlist {
+/* ---------- Folder tree ---------- */
+.tree {
   list-style: none; margin: 0; padding: 6px;
-  overflow-y: auto; min-height: 0; flex: 1;
+  overflow-y: auto; min-height: 0; flex: 1; font-size: 13px;
 }
-.playlist li {
-  display: grid; grid-template-columns: 26px 1fr auto; align-items: center;
-  gap: 10px; padding: 9px 12px; border-radius: 12px; cursor: pointer;
-  color: var(--muted); font-size: 13px; user-select: none;
+.tree-empty { color: var(--muted); padding: 28px 14px; text-align: center; font-size: 13px; line-height: 1.6; }
+.node-row, .track {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 10px; padding-left: calc(10px + var(--depth, 0) * 14px);
+  border-radius: 10px; cursor: pointer; color: var(--muted); user-select: none;
 }
-.playlist li .idx { font-variant-numeric: tabular-nums; text-align: right; color: var(--muted); }
-.playlist li .name { min-width: 0; overflow: hidden; }
-.playlist li .name .t { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.playlist li .name .a { font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.playlist li .dur { font-variant-numeric: tabular-nums; font-size: 11.5px; }
-.playlist li:hover { background: var(--panel-2); }
-.playlist li.active {
-  background: linear-gradient(90deg, rgba(229, 56, 59, 0.24), rgba(229, 56, 59, 0.05));
-  color: var(--text);
+.node-row:hover, .track:hover { background: var(--panel-2); color: var(--text); }
+.caret { width: 14px; text-align: center; color: var(--muted); font-size: 11px; flex: 0 0 auto; transition: transform 0.12s ease; }
+.caret.open { transform: rotate(90deg); }
+.caret.empty { visibility: hidden; }
+.node-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.node.folder > .node-row .node-name { color: var(--text); font-weight: 600; }
+.node.album > .node-row .node-name { color: var(--text); }
+.node-count { font-size: 11px; color: var(--muted); background: var(--panel-2); border-radius: 999px; padding: 1px 7px; }
+.node-play { border: none; background: transparent; color: var(--muted); cursor: pointer; width: 24px; height: 24px; display: grid; place-items: center; border-radius: 6px; opacity: 0; flex: 0 0 auto; }
+.node-play svg { width: 15px; height: 15px; }
+.node-row:hover .node-play { opacity: 1; }
+.node-play:hover { color: var(--red-bright); background: var(--panel-2); }
+.node.album.current > .node-row {
+  background: linear-gradient(90deg, rgba(229, 56, 59, 0.22), rgba(229, 56, 59, 0.05));
   box-shadow: inset 0 0 0 1px rgba(255, 91, 95, 0.4);
 }
-.playlist li.active .idx { color: var(--red-bright); }
-.playlist li.playing .idx::after { content: "▸"; color: var(--red-bright); }
+.node.album.current > .node-row .node-name { color: var(--red-bright); }
+.track .t-idx { width: 20px; text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); flex: 0 0 auto; }
+.track .t-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.track .t-dur { font-variant-numeric: tabular-nums; font-size: 11px; color: var(--muted); }
+.track.active .t-idx, .track.active .t-name { color: var(--red-bright); }
 
 /* ---------- Main ---------- */
 #main {
@@ -204,9 +214,9 @@ input[type="range"].range {
 .range::-moz-range-thumb { width: 14px; height: 14px; border: none; border-radius: 50%; background: #fff; }
 
 /* ---------- Scrollbar ---------- */
-.playlist::-webkit-scrollbar { width: 10px; }
-.playlist::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.12); border-radius: 999px; border: 3px solid transparent; background-clip: content-box; }
-.playlist::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.22); background-clip: content-box; }
+.tree::-webkit-scrollbar { width: 10px; }
+.tree::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.12); border-radius: 999px; border: 3px solid transparent; background-clip: content-box; }
+.tree::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.22); background-clip: content-box; }
 
 @media (max-width: 820px) {
   #app { grid-template-columns: 1fr; }

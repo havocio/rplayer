@@ -1,6 +1,7 @@
 // rplayer frontend — vanilla JS. Talks to the Rust engine via Tauri commands,
 // and stays in sync through the `player://tick` event stream (audio never runs
-// in the webview). No framework, so the shipped bundle stays tiny.
+// in the webview). The sidebar is a multi-level folder tree; selecting an album
+// loads that album as the engine queue, so order/repeat/shuffle stay within it.
 import "./styles.css";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -9,8 +10,8 @@ import { open } from "@tauri-apps/plugin-dialog";
 // ---- element refs -----------------------------------------------------------
 const $ = (id) => document.getElementById(id);
 const els = {
-  playlist: $("playlist"),
-  queueCount: $("queue-count"),
+  library: $("library"),
+  count: $("queue-count"),
   title: $("np-title"),
   artist: $("np-artist"),
   album: $("np-album"),
@@ -43,16 +44,20 @@ let snap = {
   queueLen: 0,
   current: null,
 };
-let queue = []; // mirror of the engine queue for rendering
+let library = []; // all tracks (flat)
+let sources = []; // added root folders
+let tree = { roots: [] }; // built folder tree
+const idToNode = new Map(); // numeric id -> node (avoids path-escaping in DOM)
+let expanded = new Set(); // node.norm paths currently expanded
 let scrubbing = false;
 let lastTick = { pos: 0, playing: false, at: performance.now() };
 let coverUrl = null;
 let lastCoverPath = null;
 let muted = false;
 let lastVolume = 1;
+let lastTreeKey = ""; // only re-render the tree when this changes
 
-// Unified icon set — all 24×24 inline SVG using `currentColor`, so every control
-// matches the theme and scales cleanly (no color-emoji mismatch).
+// ---- icons (unified inline SVG, currentColor) -------------------------------
 const ICONS = {
   play: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>',
   pause: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 5h4v14H6zm8 0h4v14h-4z"/></svg>',
@@ -67,9 +72,9 @@ const ICONS = {
 
 const MODES = [
   { id: "order", svg: ICONS.order, label: "顺序播放" },
-  { id: "repeatAll", svg: ICONS.repeat, label: "列表循环" },
+  { id: "repeatAll", svg: ICONS.repeat, label: "列表循环（本专辑）" },
   { id: "repeatOne", svg: ICONS.repeatOne, label: "单曲循环" },
-  { id: "shuffle", svg: ICONS.shuffle, label: "随机播放" },
+  { id: "shuffle", svg: ICONS.shuffle, label: "随机播放（本专辑）" },
 ];
 
 const AUDIO_EXT = ["flac", "ape", "wav", "wave", "aiff", "aif", "alac", "m4a", "mp3", "aac", "ogg", "opus", "wv"];
@@ -89,7 +94,129 @@ const setFill = (input) => {
   input.style.setProperty("--fill", `${pct}%`);
 };
 
-// ---- rendering --------------------------------------------------------------
+const norm = (p) => String(p).replace(/\\/g, "/");
+const dirname = (p) => {
+  const n = norm(p);
+  const i = n.lastIndexOf("/");
+  return i <= 0 ? n : n.slice(0, i);
+};
+const basename = (p) => {
+  const n = norm(p);
+  const i = n.lastIndexOf("/");
+  return i < 0 ? n : n.slice(i + 1);
+};
+
+function escapeHtml(s) {
+  return String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+// ---- folder tree ------------------------------------------------------------
+function buildTree() {
+  idToNode.clear();
+  const nodes = new Map();
+  let idSeq = 0;
+  const ensure = (p) => {
+    const n = norm(p);
+    if (!nodes.has(n)) {
+      nodes.set(n, { id: idSeq++, path: p, norm: n, name: basename(n) || n, tracks: [], children: new Set(), isAlbum: false });
+    }
+    return nodes.get(n);
+  };
+  const srcSet = new Set(sources.map(norm));
+
+  for (const t of library) {
+    const an = ensure(dirname(t.path));
+    an.tracks.push(t);
+    an.isAlbum = true;
+    let cur = an;
+    for (;;) {
+      const pn = dirname(cur.norm);
+      if (pn === cur.norm) break;
+      const parent = ensure(pn);
+      parent.children.add(cur.norm);
+      cur = parent;
+      if (srcSet.has(cur.norm)) break;
+    }
+  }
+
+  for (const nd of nodes.values()) {
+    nd.tracks.sort((a, b) => (a.trackNumber || 0) - (b.trackNumber || 0) || String(a.title).localeCompare(String(b.title), "zh"));
+    nd.kids = [...nd.children].map((c) => nodes.get(c)).sort((a, b) => a.name.localeCompare(b.name, "zh"));
+    idToNode.set(nd.id, nd);
+  }
+
+  const roots = sources.map((s) => nodes.get(norm(s))).filter(Boolean);
+  tree = { roots };
+}
+
+const currentAlbumNorm = () => (snap.current ? norm(dirname(snap.current.path)) : null);
+
+function renderTree() {
+  const html = tree.roots.length
+    ? tree.roots.map((r) => renderNode(r, 0)).join("")
+    : `<div class="tree-empty">点上方「＋ 文件夹」导入音乐目录</div>`;
+  els.library.innerHTML = html;
+  els.count.textContent = `${library.length} 首`;
+}
+
+function renderNode(node, depth) {
+  const isOpen = expanded.has(node.norm);
+  const isCurAlbum = node.isAlbum && node.norm === currentAlbumNorm();
+  const caret = node.tracks.length || (node.kids && node.kids.length)
+    ? `<span class="caret ${isOpen ? "open" : ""}" data-id="${node.id}" data-act="toggle">▸</span>`
+    : `<span class="caret empty"></span>`;
+  const nameAttr = node.isAlbum ? `data-id="${node.id}" data-act="play-album"` : `data-id="${node.id}" data-act="toggle"`;
+  const count = node.isAlbum ? `<span class="node-count">${node.tracks.length}</span>` : "";
+  const playBtn = node.isAlbum && node.tracks.length
+    ? `<button class="node-play" data-id="${node.id}" data-act="play-album" title="播放整张专辑">${ICONS.play}</button>`
+    : "";
+
+  let inner = "";
+  if (isOpen) {
+    if (node.kids && node.kids.length) inner += node.kids.map((c) => renderNode(c, depth + 1)).join("");
+    if (node.tracks.length) inner += node.tracks.map((t, i) => renderTrack(node, t, i, depth + 1)).join("");
+  }
+
+  return `<div class="node ${node.isAlbum ? "album" : "folder"}${isCurAlbum ? " current" : ""}" style="--depth:${depth}">
+    <div class="node-row">${caret}<span class="node-name" ${nameAttr}>${escapeHtml(node.name)}</span>${count}${playBtn}</div>
+    ${inner}
+  </div>`;
+}
+
+function renderTrack(albumNode, t, i, depth) {
+  const active = snap.current && snap.current.path === t.path;
+  const playing = active && snap.state === "playing";
+  return `<div class="track ${active ? "active" : ""}" style="--depth:${depth}" data-id="${albumNode.id}" data-idx="${i}">
+    <span class="t-idx">${playing ? "▸" : t.trackNumber || i + 1}</span>
+    <span class="t-name">${escapeHtml(t.title)}</span>
+    <span class="t-dur">${fmt(t.durationSecs)}</span>
+  </div>`;
+}
+
+function expandTo(n) {
+  expanded.add(n);
+  let p = dirname(n);
+  const srcSet = new Set(sources.map(norm));
+  while (p && p !== n) {
+    expanded.add(p);
+    if (srcSet.has(p)) break;
+    n = p;
+    p = dirname(p);
+    if (p === n) break;
+  }
+}
+
+async function startAlbum(node, idx) {
+  expandTo(node.norm);
+  try {
+    applySnapshot(await invoke("play_album", { tracks: node.tracks, index: idx }));
+  } catch (e) {
+    console.error(e);
+  }
+  renderTree();
+}
+
+// ---- rendering (now playing / transport) ------------------------------------
 function renderNowPlaying() {
   const t = snap.current;
   els.title.textContent = t?.title || "未选择曲目";
@@ -101,7 +228,7 @@ function renderNowPlaying() {
   if (t?.year) tags.push(`<span class="tag">${t.year}</span>`);
   if (t?.genre) tags.push(`<span class="tag">${t.genre}</span>`);
   if (t) {
-    const ext = (t.path.split(".").pop() || "").toUpperCase();
+    const ext = (norm(t.path).split(".").pop() || "").toUpperCase();
     if (["FLAC", "APE", "WAV", "AIFF", "ALAC", "WV"].includes(ext)) {
       tags.push(`<span class="tag lossless">${ext} · LOSSLESS</span>`);
     } else {
@@ -113,21 +240,6 @@ function renderNowPlaying() {
   els.timeDur.textContent = fmt(snap.durationSecs);
   els.seek.max = Math.max(1, Math.round(snap.durationSecs * 10)) / 10 || 1;
   loadCover(t?.path || null);
-}
-
-function renderPlaylist() {
-  els.queueCount.textContent = `${queue.length} 首`;
-  els.playlist.innerHTML = queue
-    .map((t, i) => {
-      const active = i === snap.index;
-      const playing = active && snap.state === "playing";
-      return `<li class="${active ? "active" : ""} ${playing ? "playing" : ""}" data-i="${i}">
-        <span class="idx">${i + 1}</span>
-        <span class="name"><span class="t">${escapeHtml(t.title)}</span><span class="a">${escapeHtml(t.artist)}</span></span>
-        <span class="dur">${fmt(t.durationSecs)}</span>
-      </li>`;
-    })
-    .join("");
 }
 
 function renderTransport() {
@@ -144,38 +256,20 @@ function renderTransport() {
   els.mute.classList.toggle("on", isMute);
 }
 
-function highlightRow() {
-  els.playlist.querySelectorAll("li").forEach((li) => {
-    const i = +li.dataset.i;
-    li.classList.toggle("active", i === snap.index);
-    li.classList.toggle("playing", i === snap.index && snap.state === "playing");
-  });
-}
-
-function escapeHtml(s) {
-  return (s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-}
-
 // ---- cover art --------------------------------------------------------------
 async function loadCover(path) {
-  if (!path) {
-    resetCover();
-    return;
-  }
+  if (!path) return resetCover();
   if (path === lastCoverPath) return;
   lastCoverPath = path;
   try {
     const c = await invoke("cover", { path });
-    if (!c || !c.data || !c.data.length) {
-      resetCover();
-      return;
-    }
+    if (!c || !c.data || !c.data.length) return resetCover();
     const blob = new Blob([new Uint8Array(c.data)], { type: c.mime });
     if (coverUrl) URL.revokeObjectURL(coverUrl);
     coverUrl = URL.createObjectURL(blob);
     els.cover.innerHTML = `<img src="${coverUrl}" alt="cover" />`;
     els.cover.dataset.empty = "false";
-  } catch (e) {
+  } catch {
     resetCover();
   }
 }
@@ -197,7 +291,14 @@ function applySnapshot(next) {
   lastTick = { pos: snap.positionSecs, playing: snap.state === "playing", at: performance.now() };
   renderNowPlaying();
   renderTransport();
-  highlightRow();
+  // Re-render the tree only when the highlighted track/state actually changes
+  // (avoids rebuilding the whole tree on every 250ms tick).
+  const key = `${currentAlbumNorm()}|${snap.current?.path || ""}|${snap.state}`;
+  if (key !== lastTreeKey) {
+    lastTreeKey = key;
+    if (snap.current) expandTo(currentAlbumNorm());
+    renderTree();
+  }
 }
 
 // smooth progress between 250ms ticks
@@ -222,35 +323,41 @@ const act = (fn) => async (...args) => {
   }
 };
 
+async function refreshLibrary() {
+  sources = await invoke("get_sources");
+  library = await invoke("get_library");
+  buildTree();
+  for (const r of tree.roots) expanded.add(r.norm);
+  renderTree();
+}
+
 async function addFiles() {
   const picked = await open({ multiple: true, directory: false, filters: [{ name: "音频", extensions: AUDIO_EXT }] });
   if (!picked) return;
-  const paths = Array.isArray(picked) ? picked : [picked];
-  queue = await invoke("add_files", { paths });
-  renderPlaylist();
-  applySnapshot(await invoke("snapshot"));
-  if (snap.index === Number.MAX_SAFE_INTEGER && queue.length) await act(invoke)("play_index", { index: 0 })();
+  await invoke("add_files", { paths: Array.isArray(picked) ? picked : [picked] });
+  await refreshLibrary();
 }
 
 async function addFolder() {
   const dir = await open({ directory: true, multiple: false });
   if (!dir) return;
-  queue = await invoke("add_folder", { dir }); // recursive scan, de-duplicated & persisted
-  renderPlaylist();
-  applySnapshot(await invoke("snapshot"));
-  if (snap.index === Number.MAX_SAFE_INTEGER && queue.length) await act(invoke)("play_index", { index: 0 })();
+  await invoke("add_folder", { dir });
+  await refreshLibrary();
+  expanded.add(norm(dir));
+  renderTree();
 }
 
 async function rescanLibrary() {
-  queue = await invoke("rescan"); // re-walk saved folders recursively
-  renderPlaylist();
-  applySnapshot(await invoke("snapshot"));
+  await invoke("rescan");
+  await refreshLibrary();
 }
 
-async function clearQueue() {
-  applySnapshot(await invoke("clear_queue"));
-  queue = [];
-  renderPlaylist();
+async function clearLibrary() {
+  applySnapshot(await invoke("clear_library"));
+  library = [];
+  sources = [];
+  buildTree();
+  renderTree();
 }
 
 function cycleMode() {
@@ -274,12 +381,32 @@ function toggleMute() {
 els.addFiles.addEventListener("click", () => addFiles().catch(console.error));
 els.addFolder.addEventListener("click", () => addFolder().catch(console.error));
 els.rescan.addEventListener("click", () => rescanLibrary().catch(console.error));
-els.clear.addEventListener("click", () => clearQueue().catch(console.error));
+els.clear.addEventListener("click", () => clearLibrary().catch(console.error));
 els.play.addEventListener("click", () => act(invoke)("toggle")());
 els.prev.addEventListener("click", () => act(invoke)("prev")());
 els.next.addEventListener("click", () => act(invoke)("next")());
 els.mode.addEventListener("click", cycleMode);
 els.mute.addEventListener("click", toggleMute);
+
+els.library.addEventListener("click", (e) => {
+  const track = e.target.closest("[data-idx]");
+  if (track) {
+    const node = idToNode.get(+track.dataset.id);
+    if (node) startAlbum(node, +track.dataset.idx);
+    return;
+  }
+  const action = e.target.closest("[data-act]");
+  if (!action) return;
+  const node = idToNode.get(+action.dataset.id);
+  if (!node) return;
+  if (action.dataset.act === "toggle") {
+    if (expanded.has(node.norm)) expanded.delete(node.norm);
+    else expanded.add(node.norm);
+    renderTree();
+  } else if (action.dataset.act === "play-album") {
+    startAlbum(node, 0);
+  }
+});
 
 els.volume.addEventListener("input", (e) => {
   const v = +e.target.value / 100;
@@ -301,12 +428,6 @@ els.seek.addEventListener("change", (e) => {
   act(invoke)("seek", { secs: to })();
 });
 
-els.playlist.addEventListener("click", (e) => {
-  const li = e.target.closest("li");
-  if (!li) return;
-  act(invoke)("play_index", { index: +li.dataset.i })();
-});
-
 window.addEventListener("keydown", (e) => {
   if (["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) return;
   if (e.code === "Space") {
@@ -323,11 +444,10 @@ window.addEventListener("keydown", (e) => {
 listen("player://tick", (ev) => applySnapshot(ev.payload)).catch(console.error);
 
 (async function boot() {
-  renderTransport(); // paint icons immediately (play/pause, mode, volume) even before first snapshot
+  renderTransport();
   requestAnimationFrame(animate);
   try {
-    queue = await invoke("get_queue"); // restore persisted queue across restarts
-    renderPlaylist();
+    await refreshLibrary();
     applySnapshot(await invoke("snapshot"));
   } catch (e) {
     console.error("boot failed:", e);

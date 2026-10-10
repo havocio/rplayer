@@ -2,9 +2,15 @@
 //! commands + a playback-progress event stream. Audio never touches the webview —
 //! the Rust side owns decode/output, the UI just renders state and issues intents.
 //!
-//! The queue and the folders the user added are persisted to
-//! `<app_data_dir>/library.json` so they survive restarts; folders are rescanned
-//! recursively on demand.
+//! Two distinct lists are kept:
+//! * **library** — every track found under the added folders (used to build the
+//!   multi-level folder tree in the UI), and
+//! * **queue** — the currently playing *album* (the engine's queue). Order /
+//!   repeat / shuffle all operate within this album, matching the "play by album"
+//!   model.
+//!
+//! Both, plus the added source folders and the selected index, persist to
+//! `<app_data_dir>/library.json` so the library and current album survive restarts.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -16,20 +22,21 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use player_core::{EngineError, PlayMode, PlayerEngine, Snapshot, Track};
 
-/// Shared engine handle. `PlayerEngine` is `Send` but not `Sync` (it owns a
-/// `cpal::Stream`), so we guard it with a `Mutex`. `Mutex<T>` is `Sync` whenever
-/// `T: Send`, which is exactly what Tauri managed state requires.
-type Engine = Mutex<Option<PlayerEngine>>;
-
-/// The folders the user has added (used by `rescan` and persisted across runs).
-type Sources = Mutex<Vec<PathBuf>>;
+/// Combined managed state. All fields are interior-mutable `Mutex`es, so `App` is
+/// `Send + Sync` even though `PlayerEngine` alone is not `Sync`.
+struct App {
+    engine: Mutex<Option<PlayerEngine>>,
+    library: Mutex<Vec<Track>>,
+    sources: Mutex<Vec<PathBuf>>,
+}
 
 /// On-disk library snapshot.
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct Library {
+struct Persisted {
     sources: Vec<PathBuf>,
-    tracks: Vec<Track>,
+    library: Vec<Track>,
+    queue: Vec<Track>,
     index: usize,
 }
 
@@ -42,6 +49,54 @@ struct CoverPayload {
     data: Vec<u8>,
 }
 
+fn engine_err() -> String {
+    "audio engine unavailable (no output device)".to_string()
+}
+
+impl App {
+    fn persist(&self, app: &AppHandle) {
+        let Some(path) = library_file(app) else {
+            return;
+        };
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let sources = self.sources.lock().unwrap_or_else(|p| p.into_inner()).clone();
+        let library = self.library.lock().unwrap_or_else(|p| p.into_inner()).clone();
+        let (queue, index) = self
+            .engine
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .as_ref()
+            .map(|e| (e.queue().to_vec(), e.index()))
+            .unwrap_or((Vec::new(), usize::MAX));
+        let data = Persisted {
+            sources,
+            library,
+            queue,
+            index,
+        };
+        if let Ok(json) = serde_json::to_string(&data) {
+            let _ = std::fs::write(path, json);
+        }
+    }
+
+    /// Run a transport action on the engine, then persist and return a snapshot.
+    fn run<F>(&self, app: &AppHandle, f: F) -> Result<Snapshot, String>
+    where
+        F: FnOnce(&mut PlayerEngine) -> Result<(), EngineError>,
+    {
+        let snap = {
+            let mut guard = self.engine.lock().unwrap_or_else(|p| p.into_inner());
+            let e = guard.as_mut().ok_or_else(engine_err)?;
+            f(e).map_err(|e| e.to_string())?;
+            e.snapshot()
+        };
+        self.persist(app);
+        Ok(snap)
+    }
+}
+
 // ---- persistence ------------------------------------------------------------
 
 fn library_file(app: &AppHandle) -> Option<PathBuf> {
@@ -49,69 +104,20 @@ fn library_file(app: &AppHandle) -> Option<PathBuf> {
     Some(dir.join("library.json"))
 }
 
-fn load_library(app: &AppHandle) -> Library {
+fn load_persisted(app: &AppHandle) -> Persisted {
     library_file(app)
         .and_then(|p| std::fs::read_to_string(p).ok())
-        .and_then(|s| serde_json::from_str::<Library>(&s).ok())
-        .unwrap_or(Library {
+        .and_then(|s| serde_json::from_str::<Persisted>(&s).ok())
+        .unwrap_or(Persisted {
             sources: Vec::new(),
-            tracks: Vec::new(),
+            library: Vec::new(),
+            queue: Vec::new(),
             index: usize::MAX,
         })
 }
 
-fn save_library(app: &AppHandle, tracks: &[Track], index: usize, sources: &[PathBuf]) {
-    let Some(path) = library_file(app) else {
-        return;
-    };
-    if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    let lib = Library {
-        sources: sources.to_vec(),
-        tracks: tracks.to_vec(),
-        index,
-    };
-    if let Ok(json) = serde_json::to_string(&lib) {
-        let _ = std::fs::write(path, json);
-    }
-}
-
-/// Clone the current source list, releasing the lock immediately (never held
-/// across the engine lock, to keep a single, cycle-free lock order).
-fn sources_snapshot(sources: &State<'_, Sources>) -> Vec<PathBuf> {
-    sources.lock().unwrap_or_else(|p| p.into_inner()).clone()
-}
-
-fn engine_err() -> String {
-    "audio engine unavailable (no output device)".to_string()
-}
-
-// ---- helpers ----------------------------------------------------------------
-
-/// Lock the engine, run a mutating call, persist the library, and return a fresh
-/// snapshot so the UI updates in the same round-trip as the action.
-fn mutate<F>(
-    app: AppHandle,
-    engine: State<'_, Engine>,
-    sources: State<'_, Sources>,
-    f: F,
-) -> Result<Snapshot, String>
-where
-    F: FnOnce(&mut PlayerEngine) -> Result<(), EngineError>,
-{
-    let srcs = sources_snapshot(&sources);
-    let mut guard = engine.lock().unwrap_or_else(|p| p.into_inner());
-    let e = guard.as_mut().ok_or_else(engine_err)?;
-    f(e).map_err(|e| e.to_string())?;
-    let snap = e.snapshot();
-    save_library(&app, e.queue(), e.index(), &srcs);
-    Ok(snap)
-}
-
-/// Recursively scan `dir` (generous depth) and build tracks, skipping paths already
-/// present in `existing`.
-fn scan_into_queue(dir: &Path, existing: &HashSet<PathBuf>) -> Vec<Track> {
+/// Recursively scan `dir` and build tracks, skipping paths already in `existing`.
+fn scan_new(dir: &Path, existing: &HashSet<PathBuf>) -> Vec<Track> {
     player_core::scan_dir(dir, 16)
         .into_iter()
         .filter(|p| !existing.contains(p))
@@ -119,9 +125,13 @@ fn scan_into_queue(dir: &Path, existing: &HashSet<PathBuf>) -> Vec<Track> {
         .collect()
 }
 
-// ---- read-only / metadata commands -----------------------------------------
+/// Clone the current library (all tracks).
+fn library_of(state: &App) -> Vec<Track> {
+    state.library.lock().unwrap_or_else(|p| p.into_inner()).clone()
+}
 
-/// Cover art bytes for a given track path, if present.
+// ---- read-only commands -----------------------------------------------------
+
 #[tauri::command]
 fn cover(path: String) -> Option<CoverPayload> {
     player_core::read_cover(Path::new(&path)).map(|c| CoverPayload {
@@ -130,20 +140,28 @@ fn cover(path: String) -> Option<CoverPayload> {
     })
 }
 
-/// Current engine state, on demand (e.g. right after the window is created).
 #[tauri::command]
-fn snapshot(
-    app: AppHandle,
-    engine: State<Engine>,
-    sources: State<Sources>,
-) -> Result<Snapshot, String> {
-    mutate(app, engine, sources, |_| Ok(()))
+fn snapshot(app: AppHandle, state: State<App>) -> Result<Snapshot, String> {
+    state.run(&app, |_| Ok(()))
 }
 
-/// The full queue (for the UI to render on startup).
+/// Every track in the library (frontend builds the folder tree from these paths).
 #[tauri::command]
-fn get_queue(engine: State<Engine>) -> Vec<Track> {
-    engine
+fn get_library(state: State<App>) -> Vec<Track> {
+    library_of(&state)
+}
+
+/// The folders the user has added (tree roots).
+#[tauri::command]
+fn get_sources(state: State<App>) -> Vec<PathBuf> {
+    state.sources.lock().unwrap_or_else(|p| p.into_inner()).clone()
+}
+
+/// The currently loaded album (engine queue).
+#[tauri::command]
+fn get_queue(state: State<App>) -> Vec<Track> {
+    state
+        .engine
         .lock()
         .unwrap_or_else(|p| p.into_inner())
         .as_ref()
@@ -151,261 +169,174 @@ fn get_queue(engine: State<Engine>) -> Vec<Track> {
         .unwrap_or_default()
 }
 
-/// The folders the user has added (so the UI can show / rescan them).
-#[tauri::command]
-fn get_sources(sources: State<Sources>) -> Vec<PathBuf> {
-    sources_snapshot(&sources)
-}
+// ---- library mutation commands (update the full library) --------------------
 
-// ---- library mutation commands (persisted) ---------------------------------
-
-/// Add individual files to the queue (dedup by path). Returns the updated queue.
 #[tauri::command]
 fn add_files(
     app: AppHandle,
-    engine: State<Engine>,
-    sources: State<Sources>,
+    state: State<App>,
     paths: Vec<String>,
 ) -> Result<Vec<Track>, String> {
-    let (q, idx) = {
-        let mut guard = engine.lock().unwrap_or_else(|p| p.into_inner());
-        let e = guard.as_mut().ok_or_else(engine_err)?;
-        let existing: HashSet<PathBuf> = e.queue().iter().map(|t| t.path.clone()).collect();
-        let new: Vec<Track> = paths
-            .into_iter()
-            .map(PathBuf::from)
-            .filter(|p| !existing.contains(p))
-            .map(Track::from_path)
-            .collect();
-        e.add_tracks(new);
-        (e.queue().to_vec(), e.index())
-    };
-    let srcs = sources_snapshot(&sources);
-    save_library(&app, &q, idx, &srcs);
-    Ok(q)
+    {
+        let mut lib = state.library.lock().unwrap_or_else(|p| p.into_inner());
+        let mut existing: HashSet<PathBuf> = lib.iter().map(|t| t.path.clone()).collect();
+        for p in paths {
+            let pb = PathBuf::from(&p);
+            if existing.insert(pb.clone()) {
+                lib.push(Track::from_path(pb));
+            }
+        }
+    }
+    state.persist(&app);
+    Ok(library_of(&state))
 }
 
-/// Recursively scan a folder, append new tracks, remember the folder. Returns queue.
 #[tauri::command]
-fn add_folder(
-    app: AppHandle,
-    engine: State<Engine>,
-    sources: State<Sources>,
-    dir: String,
-) -> Result<Vec<Track>, String> {
+fn add_folder(app: AppHandle, state: State<App>, dir: String) -> Result<Vec<Track>, String> {
     let dirp = PathBuf::from(&dir);
-    // Snapshot existing paths, then scan WITHOUT holding the engine lock (a big
-    // folder scan shouldn't stall the progress ticker).
-    let existing: HashSet<PathBuf> = engine
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .as_ref()
-        .map(|e| e.queue().iter().map(|t| t.path.clone()).collect())
-        .unwrap_or_default();
-    let new = scan_into_queue(&dirp, &existing);
-
-    let (q, idx) = {
-        let mut guard = engine.lock().unwrap_or_else(|p| p.into_inner());
-        let e = guard.as_mut().ok_or_else(engine_err)?;
-        e.add_tracks(new);
-        (e.queue().to_vec(), e.index())
-    };
-
-    let srcs = {
-        let mut s = sources.lock().unwrap_or_else(|p| p.into_inner());
+    {
+        let mut lib = state.library.lock().unwrap_or_else(|p| p.into_inner());
+        let existing: HashSet<PathBuf> = lib.iter().map(|t| t.path.clone()).collect();
+        lib.extend(scan_new(&dirp, &existing));
+    }
+    {
+        let mut s = state.sources.lock().unwrap_or_else(|p| p.into_inner());
         if !s.contains(&dirp) {
             s.push(dirp);
         }
-        s.clone()
-    };
-    save_library(&app, &q, idx, &srcs);
-    Ok(q)
+    }
+    state.persist(&app);
+    Ok(library_of(&state))
 }
 
-/// Re-walk every saved folder (recursively) and rebuild the queue, preserving the
-/// currently selected track when it still exists. Returns the updated queue.
+/// Re-walk every saved folder (recursively) and rebuild the library.
 #[tauri::command]
-fn rescan(
-    app: AppHandle,
-    engine: State<Engine>,
-    sources: State<Sources>,
-) -> Result<Vec<Track>, String> {
-    let srcs = sources_snapshot(&sources);
+fn rescan(app: AppHandle, state: State<App>) -> Result<Vec<Track>, String> {
+    let srcs = state.sources.lock().unwrap_or_else(|p| p.into_inner()).clone();
     let mut seen: HashSet<PathBuf> = HashSet::new();
-    let mut tracks: Vec<Track> = Vec::new();
+    let mut lib: Vec<Track> = Vec::new();
     for dir in &srcs {
         for p in player_core::scan_dir(dir, 16) {
             if seen.insert(p.clone()) {
-                tracks.push(Track::from_path(p));
+                lib.push(Track::from_path(p));
             }
         }
     }
-
-    let (q, idx) = {
-        let mut guard = engine.lock().unwrap_or_else(|p| p.into_inner());
-        let e = guard.as_mut().ok_or_else(engine_err)?;
-        let prev = e.queue().get(e.index()).map(|t| t.path.clone());
-        e.set_queue(tracks);
-        if let Some(prev) = prev {
-            if let Some(i) = e.queue().iter().position(|t| t.path == prev) {
-                e.set_index(i);
-            }
-        }
-        (e.queue().to_vec(), e.index())
-    };
-    save_library(&app, &q, idx, &srcs);
-    Ok(q)
+    *state.library.lock().unwrap_or_else(|p| p.into_inner()) = lib;
+    state.persist(&app);
+    Ok(library_of(&state))
 }
 
-// ---- transport commands -----------------------------------------------------
-
 #[tauri::command]
-fn set_queue(
+fn clear_library(app: AppHandle, state: State<App>) -> Result<Snapshot, String> {
+    let snap = {
+        let mut guard = state.engine.lock().unwrap_or_else(|p| p.into_inner());
+        match guard.as_mut() {
+            Some(e) => {
+                e.clear_queue();
+                e.snapshot()
+            }
+            None => Snapshot::empty(),
+        }
+    };
+    *state.library.lock().unwrap_or_else(|p| p.into_inner()) = Vec::new();
+    *state.sources.lock().unwrap_or_else(|p| p.into_inner()) = Vec::new();
+    state.persist(&app);
+    Ok(snap)
+}
+
+// ---- album playback (sets the engine queue to one album) --------------------
+
+/// Load an album's tracks as the queue and start at `index`. Order / repeat /
+/// shuffle then stay within this album.
+#[tauri::command]
+fn play_album(
     app: AppHandle,
-    engine: State<Engine>,
-    sources: State<Sources>,
+    state: State<App>,
     tracks: Vec<Track>,
+    index: usize,
 ) -> Result<Snapshot, String> {
-    mutate(app, engine, sources, move |e| {
+    state.run(&app, move |e| {
         e.set_queue(tracks);
-        Ok(())
+        e.play_index(index)
     })
 }
 
-#[tauri::command]
-fn clear_queue(
-    app: AppHandle,
-    engine: State<Engine>,
-    sources: State<Sources>,
-) -> Result<Snapshot, String> {
-    let snap = {
-        let mut guard = engine.lock().unwrap_or_else(|p| p.into_inner());
-        let e = guard.as_mut().ok_or_else(engine_err)?;
-        e.clear_queue();
-        e.snapshot()
-    };
-    {
-        let mut s = sources.lock().unwrap_or_else(|p| p.into_inner());
-        s.clear();
-    }
-    save_library(&app, &[], usize::MAX, &[]);
-    Ok(snap)
-}
+// ---- transport commands (operate within the current album) ------------------
 
 #[tauri::command]
 fn play_index(
     app: AppHandle,
-    engine: State<Engine>,
-    sources: State<Sources>,
+    state: State<App>,
     index: usize,
 ) -> Result<Snapshot, String> {
-    mutate(app, engine, sources, move |e| e.play_index(index))
+    state.run(&app, move |e| e.play_index(index))
 }
 
 #[tauri::command]
-fn play(
-    app: AppHandle,
-    engine: State<Engine>,
-    sources: State<Sources>,
-) -> Result<Snapshot, String> {
-    mutate(app, engine, sources, |e| e.play())
+fn play(app: AppHandle, state: State<App>) -> Result<Snapshot, String> {
+    state.run(&app, |e| e.play())
 }
 
 #[tauri::command]
-fn pause(
-    app: AppHandle,
-    engine: State<Engine>,
-    sources: State<Sources>,
-) -> Result<Snapshot, String> {
-    mutate(app, engine, sources, |e| {
+fn pause(app: AppHandle, state: State<App>) -> Result<Snapshot, String> {
+    state.run(&app, |e| {
         e.pause();
         Ok(())
     })
 }
 
 #[tauri::command]
-fn toggle(
-    app: AppHandle,
-    engine: State<Engine>,
-    sources: State<Sources>,
-) -> Result<Snapshot, String> {
-    mutate(app, engine, sources, |e| e.toggle())
+fn toggle(app: AppHandle, state: State<App>) -> Result<Snapshot, String> {
+    state.run(&app, |e| e.toggle())
 }
 
 #[tauri::command]
-fn stop(
-    app: AppHandle,
-    engine: State<Engine>,
-    sources: State<Sources>,
-) -> Result<Snapshot, String> {
-    mutate(app, engine, sources, |e| {
+fn stop(app: AppHandle, state: State<App>) -> Result<Snapshot, String> {
+    state.run(&app, |e| {
         e.stop();
         Ok(())
     })
 }
 
 #[tauri::command]
-fn next(
-    app: AppHandle,
-    engine: State<Engine>,
-    sources: State<Sources>,
-) -> Result<Snapshot, String> {
-    mutate(app, engine, sources, |e| e.next())
+fn next(app: AppHandle, state: State<App>) -> Result<Snapshot, String> {
+    state.run(&app, |e| e.next())
 }
 
 #[tauri::command]
-fn prev(
-    app: AppHandle,
-    engine: State<Engine>,
-    sources: State<Sources>,
-) -> Result<Snapshot, String> {
-    mutate(app, engine, sources, |e| e.prev())
+fn prev(app: AppHandle, state: State<App>) -> Result<Snapshot, String> {
+    state.run(&app, |e| e.prev())
 }
 
 #[tauri::command]
-fn seek(
-    app: AppHandle,
-    engine: State<Engine>,
-    sources: State<Sources>,
-    secs: f64,
-) -> Result<Snapshot, String> {
-    mutate(app, engine, sources, move |e| e.seek(secs))
+fn seek(app: AppHandle, state: State<App>, secs: f64) -> Result<Snapshot, String> {
+    state.run(&app, move |e| e.seek(secs))
 }
 
 #[tauri::command]
-fn set_volume(
-    app: AppHandle,
-    engine: State<Engine>,
-    sources: State<Sources>,
-    v: f32,
-) -> Result<Snapshot, String> {
-    mutate(app, engine, sources, move |e| {
+fn set_volume(app: AppHandle, state: State<App>, v: f32) -> Result<Snapshot, String> {
+    state.run(&app, move |e| {
         e.set_volume(v);
         Ok(())
     })
 }
 
 #[tauri::command]
-fn set_mode(
-    app: AppHandle,
-    engine: State<Engine>,
-    sources: State<Sources>,
-    mode: PlayMode,
-) -> Result<Snapshot, String> {
-    mutate(app, engine, sources, move |e| {
+fn set_mode(app: AppHandle, state: State<App>, mode: PlayMode) -> Result<Snapshot, String> {
+    state.run(&app, move |e| {
         e.set_mode(mode);
         Ok(())
     })
 }
 
-/// Periodically advance the engine and push a state snapshot to the webview so the
-/// progress bar + transport buttons stay live without the UI polling commands.
+/// Periodically advance the engine and push a state snapshot to the webview.
 fn spawn_ticker(handle: AppHandle) {
     std::thread::spawn(move || loop {
         std::thread::sleep(Duration::from_millis(250));
         let snap = {
-            let state = handle.state::<Engine>();
-            let mut guard = state.lock().unwrap_or_else(|p| p.into_inner());
+            let state = handle.state::<App>();
+            let mut guard = state.engine.lock().unwrap_or_else(|p| p.into_inner());
             match guard.as_mut() {
                 Some(engine) => {
                     engine.poll_end();
@@ -423,12 +354,12 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            let lib = load_library(app.handle());
+            let data = load_persisted(app.handle());
             let engine = match PlayerEngine::new() {
                 Ok(mut e) => {
-                    if !lib.tracks.is_empty() {
-                        e.set_queue(lib.tracks.clone());
-                        e.set_index(lib.index);
+                    if !data.queue.is_empty() {
+                        e.set_queue(data.queue.clone());
+                        e.set_index(data.index);
                     }
                     Some(e)
                 }
@@ -437,21 +368,25 @@ pub fn run() {
                     None
                 }
             };
-            app.manage(Mutex::new(engine));
-            app.manage(Mutex::new(lib.sources));
+            app.manage(App {
+                engine: Mutex::new(engine),
+                library: Mutex::new(data.library),
+                sources: Mutex::new(data.sources),
+            });
             spawn_ticker(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             cover,
             snapshot,
-            get_queue,
+            get_library,
             get_sources,
+            get_queue,
             add_files,
             add_folder,
             rescan,
-            set_queue,
-            clear_queue,
+            clear_library,
+            play_album,
             play_index,
             play,
             pause,
