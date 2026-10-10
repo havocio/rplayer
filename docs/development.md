@@ -28,6 +28,8 @@ cargo test -p player-core -- --ignored    # 真实声卡：播放/暂停/seek/�
 
 ## 打包发布（本机）
 
+> 安装包的原理、离线出包与验证清单见 [packaging.md](packaging.md)。
+
 在**仓库根目录**执行；它会先 `vite build` 生成 `frontend/dist`，再用 `custom-protocol` 把前端内嵌进 exe，并产出安装包：
 
 ```bash

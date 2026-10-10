@@ -56,7 +56,8 @@ rplayer/
 ## 文档
 
 - [架构与设计决策](docs/architecture.md) — 技术选型、前后端通信、音频链路
-- [开发指南](docs/development.md) — 环境、构建、测试、打包、低内存构建与常见问题
+- [开发指南](docs/development.md) — 环境、构建、测试、发布流程与常见问题
+- [构建安装包](docs/packaging.md) — NSIS / MSI 原理、Tauri 打包流水线、离线出包、便携 ZIP 与验证
 
 ## 未来计划
 
