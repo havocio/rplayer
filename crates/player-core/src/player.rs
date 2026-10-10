@@ -285,6 +285,14 @@ impl PlayerEngine {
         self.index
     }
 
+    /// Restore a previously selected track index without starting playback.
+    /// Out-of-range indices are ignored (e.g. the queue shrank since it was saved).
+    pub fn set_index(&mut self, i: usize) {
+        if i < self.queue.len() {
+            self.index = i;
+        }
+    }
+
     pub fn set_mode(&mut self, mode: PlayMode) {
         self.mode = mode;
         if mode == PlayMode::Shuffle {

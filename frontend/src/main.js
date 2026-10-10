@@ -28,6 +28,7 @@ const els = {
   mute: $("btn-mute"),
   addFiles: $("add-files"),
   addFolder: $("add-folder"),
+  rescan: $("rescan"),
   clear: $("clear-queue"),
 };
 
@@ -225,26 +226,29 @@ async function addFiles() {
   const picked = await open({ multiple: true, directory: false, filters: [{ name: "音频", extensions: AUDIO_EXT }] });
   if (!picked) return;
   const paths = Array.isArray(picked) ? picked : [picked];
-  const tracks = await invoke("load_paths", { paths });
-  await act(invoke)("add_tracks", { tracks });
-  queue = queue.concat(tracks);
+  queue = await invoke("add_files", { paths });
   renderPlaylist();
-  if (snap.index === Number.MAX_SAFE_INTEGER && queue.length) await act(invoke)("play_index", { index: 0 });
+  applySnapshot(await invoke("snapshot"));
+  if (snap.index === Number.MAX_SAFE_INTEGER && queue.length) await act(invoke)("play_index", { index: 0 })();
 }
 
 async function addFolder() {
   const dir = await open({ directory: true, multiple: false });
   if (!dir) return;
-  const tracks = await invoke("scan_dir", { dir });
-  if (!tracks.length) return;
-  await act(invoke)("add_tracks", { tracks });
-  queue = queue.concat(tracks);
+  queue = await invoke("add_folder", { dir }); // recursive scan, de-duplicated & persisted
   renderPlaylist();
-  if (snap.index === Number.MAX_SAFE_INTEGER) await act(invoke)("play_index", { index: 0 });
+  applySnapshot(await invoke("snapshot"));
+  if (snap.index === Number.MAX_SAFE_INTEGER && queue.length) await act(invoke)("play_index", { index: 0 })();
+}
+
+async function rescanLibrary() {
+  queue = await invoke("rescan"); // re-walk saved folders recursively
+  renderPlaylist();
+  applySnapshot(await invoke("snapshot"));
 }
 
 async function clearQueue() {
-  await act(invoke)("clear_queue");
+  applySnapshot(await invoke("clear_queue"));
   queue = [];
   renderPlaylist();
 }
@@ -269,6 +273,7 @@ function toggleMute() {
 // ---- wiring -----------------------------------------------------------------
 els.addFiles.addEventListener("click", () => addFiles().catch(console.error));
 els.addFolder.addEventListener("click", () => addFolder().catch(console.error));
+els.rescan.addEventListener("click", () => rescanLibrary().catch(console.error));
 els.clear.addEventListener("click", () => clearQueue().catch(console.error));
 els.play.addEventListener("click", () => act(invoke)("toggle")());
 els.prev.addEventListener("click", () => act(invoke)("prev")());
@@ -321,8 +326,10 @@ listen("player://tick", (ev) => applySnapshot(ev.payload)).catch(console.error);
   renderTransport(); // paint icons immediately (play/pause, mode, volume) even before first snapshot
   requestAnimationFrame(animate);
   try {
+    queue = await invoke("get_queue"); // restore persisted queue across restarts
+    renderPlaylist();
     applySnapshot(await invoke("snapshot"));
   } catch (e) {
-    console.error("snapshot failed:", e);
+    console.error("boot failed:", e);
   }
 })();

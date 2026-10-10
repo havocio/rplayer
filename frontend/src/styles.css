@@ -88,6 +88,7 @@ body {
   font-size: 12px; padding: 4px 6px; border-radius: 8px;
 }
 .ghost:hover { color: var(--text); background: var(--panel-2); }
+.meta-actions { display: flex; gap: 2px; }
 
 .playlist {
   list-style: none; margin: 0; padding: 6px;
