@@ -1,14 +1,14 @@
-# 打 tag（v*）时自动构建 Windows 安装包并挂到 GitHub Release；也可在 Actions 页手动触发。
+# 推 v* tag → 自动构建 Windows 安装包(NSIS/MSI) + 便携 ZIP，并以「草稿 Release」挂到 GitHub，
+# 由你手动点 Publish 正式发布。
 name: Release
 
 on:
   push:
     tags:
       - "v*" # 例如 v0.1.0
-  workflow_dispatch: {} # 允许在 Actions 里手动跑一次
 
 permissions:
-  contents: write # 创建 Release / 上传产物
+  contents: write # 创建 / 更新 Release、上传产物
 
 jobs:
   release-windows:
@@ -22,6 +22,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
 
       - name: Setup Rust (stable, MSVC)
         uses: dtolnay/rust-toolchain@stable
@@ -32,34 +33,47 @@ jobs:
       - name: Install JS deps
         run: npm ci
 
-      # 构建 exe + NSIS/MSI 安装包（自动执行 vite build 生成前端，再用 custom-protocol 内嵌）
-      - name: Build Tauri app (nsis + msi)
-        run: npm run tauri build -- --bundles nsis,msi
-
-      - name: List build artifacts
-        shell: pwsh
-        run: Get-ChildItem -Recurse target/release/bundle -Include *.exe,*.msi | Select-Object FullName,Length
-
-      # 兜底：把安装包作为工作流产物保留（即使下面的 Release 步骤失败也能下载）
-      - name: Upload artifacts (fallback)
-        uses: actions/upload-artifact@v4
+      # (A) 官方 tauri-action 一步完成：npm run tauri build（内部 vite build + custom-protocol 内嵌 +
+      #     makensis/candle 产 NSIS、MSI）+ 自动把标准 bundle 产物上传到该 tag 的 Release。
+      #     好处：无需自己写 target/release/bundle 路径，tauri 布局由 action 内部解析。
+      - name: Build installers & publish draft release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          name: rplayer-windows-installers
-          path: |
-            target/release/bundle/nsis/*.exe
-            target/release/bundle/msi/*.msi
-          if-no-files-found: warn
+          tagName: ${{ github.ref_name }}
+          releaseName: "rplayer ${{ github.ref_name }}"
+          releaseBody: |
+            Windows 10 / 11。按需下载：
 
-      # 发布到 GitHub Release：tag 已存在（push tag 触发）→ 建/更新该 tag 的 Release 并附安装包
-      - name: Publish GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
+            - **NSIS 安装向导**（推荐）：`rplayer_<版本>_x64-setup.exe`
+            - **MSI**（适合企业分发）：`rplayer_<版本>_x64_en-US.msi`
+            - **便携 ZIP**（解压即用、免安装）：`rplayer_<版本>_windows_x64_portable.zip`
+
+            运行需 WebView2（Win10/11 自带）。安装包未做代码签名，首次运行如遇 SmartScreen，选择「更多信息 → 仍要运行」。
+          releaseDraft: true
+          prerelease: false
+          args: --bundles nsis,msi
+
+      # (B) 绿色便携包：把内嵌了界面的单个 exe + 说明文档压成 ZIP（配置写注册表/AppData，非破坏式）。
+      - name: Package portable ZIP
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}" -replace '^v', ''
+          $stage   = "portable"
+          Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $stage | Out-Null
+          Copy-Item target/release/rplayer.exe $stage/
+          foreach ($doc in "README.md", "LICENSE-MIT", "CHANGELOG.md") {
+            if (Test-Path $doc) { Copy-Item $doc "$stage/$doc" }
+          }
+          $zip = "rplayer_${version}_windows_x64_portable.zip"
+          Compress-Archive -Path "$stage/*" -DestinationPath $zip -Force
+          Get-Item $zip | Select-Object Name, @{n='MB';e={[math]::Round($_.Length/1MB,2)}}
+
+      # 把便携 ZIP 追加到同一 tag 的（草稿）Release 上。
+      - name: Attach portable ZIP to release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          name: rplayer ${{ github.ref_name }}
-          generate_release_notes: true
-          draft: true   # 生成草稿，由你手动在 Releases 页点击 Publish 正式发布
-          prerelease: false
-          files: |
-            target/release/bundle/nsis/*.exe
-            target/release/bundle/msi/*.msi
+          files: rplayer_*_windows_x64_portable.zip

@@ -53,7 +53,9 @@ npm run tauri build
 
 ## 发布到 GitHub Releases（自动出安装包）
 
-安装包由 `.github/workflows/release.yml` 自动构建：推一个 `v*` tag，Actions 会在 `windows-latest` 上 `npm run tauri build`，把 NSIS `.exe` 与 MSI 挂到该 tag 的 GitHub Release 上，用户到 **Releases** 页即可下载安装、无需自己编译。
+安装包由 `.github/workflows/release.yml` 自动构建：推一个 `v*` tag，Actions 会在 `windows-latest` 上用官方 `tauri-apps/tauri-action` 构建（内部完成 `vite build` + `custom-protocol` 内嵌 + NSIS/MSI 打包），并把 **NSIS `.exe`、MSI、以及便携 ZIP** 挂到该 tag 的 **草稿 Release** 上。你到 Releases 页确认无误后点 **Publish release** 即正式发布；用户从 Releases 下载安装包、无需自己编译。
+
+> 便携 ZIP = 内嵌了界面的单个 `rplayer.exe` + 文档，解压即用、免安装（配置写入 AppData/注册表，属非破坏式）。
 
 首次接入步骤（在本机执行）：
 
