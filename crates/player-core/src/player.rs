@@ -18,7 +18,7 @@ use rodio::{
 use rodio::buffer::SamplesBuffer;
 
 use crate::error::EngineError;
-use crate::state::{PlayMode, PlayState, Snapshot};
+use crate::state::{PlayMode, PlayState, ReplayGainMode, Snapshot};
 use crate::track::Track;
 use crate::Result;
 
@@ -35,6 +35,10 @@ pub struct PlayerEngine {
     state: PlayState,
     shuffle_order: Vec<usize>,
     shuffle_pos: usize,
+    /// Loudness normalization (ReplayGain) settings.
+    rg_mode: ReplayGainMode,
+    preamp_db: f32,
+    clip_guard: bool,
 }
 
 impl PlayerEngine {
@@ -58,6 +62,9 @@ impl PlayerEngine {
             state: PlayState::Stopped,
             shuffle_order: Vec::new(),
             shuffle_pos: 0,
+            rg_mode: ReplayGainMode::Off,
+            preamp_db: 0.0,
+            clip_guard: true,
         })
     }
 
@@ -111,13 +118,12 @@ impl PlayerEngine {
             .ok_or(EngineError::NoTrack)?;
         let source = self.build_source(&path)?;
 
-        self.player.clear();
-        self.player.append(source);
-        self.player.set_volume(self.volume);
-        self.player.play();
-
         self.index = i;
         self.state = PlayState::Playing;
+        self.player.clear();
+        self.player.append(source);
+        self.apply_gain();
+        self.player.play();
         Ok(())
     }
 
@@ -308,13 +314,67 @@ impl PlayerEngine {
     }
 
     pub fn set_volume(&mut self, v: f32) {
-        let v = v.clamp(0.0, 1.0);
-        self.volume = v;
-        self.player.set_volume(v);
+        self.volume = v.clamp(0.0, 1.0);
+        self.apply_gain();
     }
 
     pub fn volume(&self) -> f32 {
         self.volume
+    }
+
+    // ---- loudness normalization (ReplayGain) --------------------------------
+
+    pub fn set_replay_gain_mode(&mut self, mode: ReplayGainMode) {
+        self.rg_mode = mode;
+        self.apply_gain();
+    }
+
+    pub fn replay_gain_mode(&self) -> ReplayGainMode {
+        self.rg_mode
+    }
+
+    pub fn set_preamp_db(&mut self, db: f32) {
+        self.preamp_db = db.clamp(-24.0, 12.0);
+        self.apply_gain();
+    }
+
+    pub fn preamp_db(&self) -> f32 {
+        self.preamp_db
+    }
+
+    pub fn set_clip_guard(&mut self, on: bool) {
+        self.clip_guard = on;
+        self.apply_gain();
+    }
+
+    pub fn clip_guard(&self) -> bool {
+        self.clip_guard
+    }
+
+    /// Linear gain factor from the current track's ReplayGain + preamp, with an
+    /// optional peak-based ceiling to avoid clipping. `1.0` when normalization is
+    /// off and preamp is 0 dB (i.e. output stays bit-identical to the source).
+    fn rg_factor(&self) -> f32 {
+        let cur = self.queue.get(self.index);
+        let gain_db = match self.rg_mode {
+            ReplayGainMode::Off => 0.0,
+            ReplayGainMode::Track => cur.and_then(|t| t.rg_track_gain_db).unwrap_or(0.0),
+            ReplayGainMode::Album => cur.and_then(|t| t.rg_album_gain_db).unwrap_or(0.0),
+        };
+        let mut g = 10f32.powf((self.preamp_db + gain_db) / 20.0);
+        if self.clip_guard {
+            if let Some(peak) = cur.and_then(|t| t.rg_track_peak) {
+                if peak > 0.0 {
+                    g = g.min(1.0 / peak);
+                }
+            }
+        }
+        g
+    }
+
+    /// Push the combined user-volume * ReplayGain factor to the output.
+    fn apply_gain(&mut self) {
+        self.player.set_volume(self.volume * self.rg_factor());
     }
 
     pub fn position_secs(&self) -> f64 {
@@ -333,6 +393,9 @@ impl PlayerEngine {
             index: self.index,
             queue_len: self.queue.len(),
             current,
+            replay_gain: self.rg_mode,
+            preamp_db: self.preamp_db,
+            clip_guard: self.clip_guard,
         }
     }
 

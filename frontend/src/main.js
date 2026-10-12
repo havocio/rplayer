@@ -31,6 +31,10 @@ const els = {
   addFolder: $("add-folder"),
   rescan: $("rescan"),
   clear: $("clear-queue"),
+  rgSeg: $("rg-seg"),
+  preamp: $("preamp"),
+  preampVal: $("preamp-val"),
+  clipGuard: $("clipguard"),
 };
 
 // ---- state ------------------------------------------------------------------
@@ -43,6 +47,9 @@ let snap = {
   index: Number.MAX_SAFE_INTEGER,
   queueLen: 0,
   current: null,
+  replayGainMode: "off",
+  preampDb: 0,
+  clipGuard: true,
 };
 let library = []; // all tracks (flat)
 let sources = []; // added root folders
@@ -254,6 +261,15 @@ function renderTransport() {
   const isMute = muted || v === 0;
   els.mute.innerHTML = isMute ? ICONS.volumeMute : v < 0.5 ? ICONS.volumeLow : ICONS.volumeHigh;
   els.mute.classList.toggle("on", isMute);
+
+  // loudness (ReplayGain) controls
+  const rg = snap.replayGainMode || "off";
+  els.rgSeg.querySelectorAll(".seg-btn").forEach((b) => b.classList.toggle("active", b.dataset.rg === rg));
+  const pre = typeof snap.preampDb === "number" ? snap.preampDb : 0;
+  els.preamp.value = pre;
+  setFill(els.preamp);
+  els.preampVal.textContent = `${pre.toFixed(1)} dB`;
+  els.clipGuard.checked = snap.clipGuard !== false;
 }
 
 // ---- cover art --------------------------------------------------------------
@@ -416,6 +432,18 @@ els.volume.addEventListener("input", (e) => {
   setFill(e.target);
 });
 els.volume.addEventListener("change", (e) => act(invoke)("set_volume", { v: +e.target.value / 100 })());
+
+els.rgSeg.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-rg]");
+  if (btn) act(invoke)("set_replay_gain", { mode: btn.dataset.rg })();
+});
+els.preamp.addEventListener("input", (e) => {
+  const db = +e.target.value;
+  els.preampVal.textContent = `${db.toFixed(1)} dB`;
+  setFill(e.target);
+});
+els.preamp.addEventListener("change", (e) => act(invoke)("set_preamp", { db: +e.target.value })());
+els.clipGuard.addEventListener("change", (e) => act(invoke)("set_clip_guard", { on: e.target.checked })());
 
 els.seek.addEventListener("input", (e) => {
   scrubbing = true;

@@ -20,7 +20,7 @@ pub use error::EngineError;
 pub use formats::{is_supported, scan_dir, supported_extensions, SUPPORTED_EXTS};
 pub use metadata::{read_cover, Cover, RawMeta};
 pub use player::PlayerEngine;
-pub use state::{PlayMode, PlayState, Snapshot};
+pub use state::{PlayMode, PlayState, ReplayGainMode, Snapshot};
 pub use track::Track;
 
 /// Crate result alias.

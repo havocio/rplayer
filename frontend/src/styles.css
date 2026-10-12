@@ -191,6 +191,22 @@ body {
 
 .vol { display: flex; align-items: center; gap: 8px; margin-left: 10px; }
 
+/* ---------- Loudness (ReplayGain) row ---------- */
+.rg-row {
+  display: flex; align-items: center; justify-content: center; flex-wrap: wrap;
+  gap: 14px; margin-top: 2px; font-size: 12px; color: var(--muted);
+}
+.rg-title { letter-spacing: 0.3px; }
+.seg { display: inline-flex; background: var(--panel-2); border: 1px solid var(--stroke); border-radius: 999px; padding: 2px; }
+.seg-btn { border: none; background: transparent; color: var(--muted); cursor: pointer; font-size: 12px; padding: 4px 12px; border-radius: 999px; transition: color 0.15s ease, background 0.15s ease; }
+.seg-btn:hover { color: var(--text); }
+.seg-btn.active { color: #fff; background: linear-gradient(160deg, var(--red-bright), var(--red)); }
+.rg-pre { display: inline-flex; align-items: center; gap: 8px; }
+.pre-range { width: 92px; }
+.rg-val { font-variant-numeric: tabular-nums; min-width: 52px; color: var(--text); }
+.rg-chk { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+.rg-chk input { accent-color: var(--red); }
+
 /* ---------- Range sliders ---------- */
 input[type="range"].range {
   -webkit-appearance: none; appearance: none;

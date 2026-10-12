@@ -27,6 +27,10 @@ pub struct Track {
     pub track_number: Option<u32>,
     pub year: Option<u32>,
     pub genre: Option<String>,
+    /// ReplayGain (dB) + linear peak, used by the loudness-normalization feature.
+    pub rg_track_gain_db: Option<f32>,
+    pub rg_album_gain_db: Option<f32>,
+    pub rg_track_peak: Option<f32>,
 }
 
 impl Track {
@@ -53,6 +57,9 @@ impl Track {
                 track_number: m.track_number,
                 year: m.year,
                 genre: m.genre,
+                rg_track_gain_db: m.rg_track_gain_db,
+                rg_album_gain_db: m.rg_album_gain_db,
+                rg_track_peak: m.rg_track_peak,
                 path,
             },
             Err(_) => Self {
@@ -63,6 +70,9 @@ impl Track {
                 track_number: None,
                 year: None,
                 genre: None,
+                rg_track_gain_db: None,
+                rg_album_gain_db: None,
+                rg_track_peak: None,
                 path,
             },
         }

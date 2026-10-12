@@ -22,7 +22,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use player_core::{EngineError, PlayMode, PlayerEngine, Snapshot, Track};
+use player_core::{EngineError, PlayMode, PlayerEngine, ReplayGainMode, Snapshot, Track};
 
 /// Combined managed state. All fields are interior-mutable `Mutex`es, so `App` is
 /// `Send + Sync` even though `PlayerEngine` alone is not `Sync`.
@@ -44,10 +44,21 @@ struct Persisted {
     /// older files that predate this field.
     #[serde(default = "default_volume")]
     volume: f32,
+    /// Loudness-normalization settings (default off).
+    #[serde(default)]
+    replay_gain: ReplayGainMode,
+    #[serde(default)]
+    preamp_db: f32,
+    #[serde(default = "default_true")]
+    clip_guard: bool,
 }
 
 fn default_volume() -> f32 {
     1.0
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// Payload for cover art: raw bytes + MIME, so the frontend can build a Blob URL
@@ -67,13 +78,31 @@ impl App {
     fn persist(&self, app: &AppHandle) {
         let sources = self.sources.lock().unwrap_or_else(|p| p.into_inner()).clone();
         let library = self.library.lock().unwrap_or_else(|p| p.into_inner()).clone();
-        let (queue, index, volume) = self
+        let (queue, index, volume, replay_gain, preamp_db, clip_guard) = self
             .engine
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .as_ref()
-            .map(|e| (e.queue().to_vec(), e.index(), e.volume()))
-            .unwrap_or((Vec::new(), usize::MAX, 1.0));
+            .map(|e| {
+                (
+                    e.queue().to_vec(),
+                    e.index(),
+                    e.volume(),
+                    e.replay_gain_mode(),
+                    e.preamp_db(),
+                    e.clip_guard(),
+                )
+            })
+            .unwrap_or_else(|| {
+                (
+                    Vec::new(),
+                    usize::MAX,
+                    1.0,
+                    ReplayGainMode::Off,
+                    0.0,
+                    true,
+                )
+            });
         write_persisted(
             app,
             &Persisted {
@@ -82,6 +111,9 @@ impl App {
                 queue,
                 index,
                 volume,
+                replay_gain,
+                preamp_db,
+                clip_guard,
             },
         );
     }
@@ -134,6 +166,9 @@ fn default_persisted() -> Persisted {
         queue: Vec::new(),
         index: usize::MAX,
         volume: 1.0,
+        replay_gain: ReplayGainMode::Off,
+        preamp_db: 0.0,
+        clip_guard: true,
     }
 }
 
@@ -376,6 +411,34 @@ fn set_mode(app: AppHandle, state: State<App>, mode: PlayMode) -> Result<Snapsho
     })
 }
 
+#[tauri::command]
+fn set_replay_gain(
+    app: AppHandle,
+    state: State<App>,
+    mode: ReplayGainMode,
+) -> Result<Snapshot, String> {
+    state.run(&app, move |e| {
+        e.set_replay_gain_mode(mode);
+        Ok(())
+    })
+}
+
+#[tauri::command]
+fn set_preamp(app: AppHandle, state: State<App>, db: f32) -> Result<Snapshot, String> {
+    state.run(&app, move |e| {
+        e.set_preamp_db(db);
+        Ok(())
+    })
+}
+
+#[tauri::command]
+fn set_clip_guard(app: AppHandle, state: State<App>, on: bool) -> Result<Snapshot, String> {
+    state.run(&app, move |e| {
+        e.set_clip_guard(on);
+        Ok(())
+    })
+}
+
 /// Periodically advance the engine and push a state snapshot to the webview.
 fn spawn_ticker(handle: AppHandle) {
     std::thread::spawn(move || loop {
@@ -403,6 +466,9 @@ pub fn run() {
             let data = load_persisted(app.handle());
             let engine = match PlayerEngine::new() {
                 Ok(mut e) => {
+                    e.set_clip_guard(data.clip_guard);
+                    e.set_preamp_db(data.preamp_db);
+                    e.set_replay_gain_mode(data.replay_gain);
                     e.set_volume(data.volume);
                     if !data.queue.is_empty() {
                         e.set_queue(data.queue.clone());
@@ -443,7 +509,10 @@ pub fn run() {
             prev,
             seek,
             set_volume,
-            set_mode
+            set_mode,
+            set_replay_gain,
+            set_preamp,
+            set_clip_guard
         ])
         .run(tauri::generate_context!())
         .expect("error while running rplayer");

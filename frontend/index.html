@@ -68,6 +68,17 @@
               <input id="volume" class="range vol-range" type="range" min="0" max="100" value="100" step="1" />
             </div>
           </div>
+
+          <div class="rg-row">
+            <span class="rg-title">响度均衡</span>
+            <div class="seg" id="rg-seg" role="group" aria-label="ReplayGain 模式">
+              <button type="button" class="seg-btn" data-rg="off">关</button>
+              <button type="button" class="seg-btn" data-rg="album">专辑</button>
+              <button type="button" class="seg-btn" data-rg="track">单曲</button>
+            </div>
+            <label class="rg-pre">前级<input id="preamp" class="range pre-range" type="range" min="-12" max="12" step="0.5" value="0" /><span id="preamp-val" class="rg-val">0.0 dB</span></label>
+            <label class="rg-chk"><input id="clipguard" type="checkbox" checked />防削波</label>
+          </div>
         </section>
       </main>
     </div>
