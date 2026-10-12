@@ -1,19 +1,19 @@
-# 构建 Windows 安装包
+# 打包与分发（Windows）
 
-本文讲清楚 rplayer 的**安装包到底是怎么被"打"出来的**：NSIS / MSI 的原理、Tauri 的自动流水线、相关配置、离线打包、便携 ZIP，以及产物验证。发版流程见 [development.md](development.md)，设计背景见 [architecture.md](architecture.md)。
+> **当前只发布免安装 ZIP**（纯净 `rplayer.exe`，不含任何 .md 文档），见第六节与 [development.md](development.md)。NSIS / MSI 安装包的原理与做法保留在本文，作为将来要出安装包时的参考（`tauri.conf.json` 里 `bundle.active` 目前为 `false`，即不打安装包）。
 
-## 一、三种分发形态
+## 一、分发形态
 
-`npm run tauri build`（或 CI）一次会产出多种 Windows 分发物，都在**仓库根** `target/release/bundle/` 下（因为本项目是 cargo workspace，产物落在 workspace 根的 `target/`，不是 `src-tauri/target/`）：
+`tauri build` 产出的 `rplayer.exe` 在**仓库根** `target/release/` 下（本项目是 cargo workspace，产物落在 workspace 根的 `target/`，不是 `src-tauri/target/`）。基于它可派生：
 
-| 形态 | 路径 | 用途 |
-|------|------|------|
-| NSIS 安装向导 | `bundle/nsis/rplayer_<版本>_x64-setup.exe` | 面向普通用户，双击安装，带卸载器（推荐） |
-| MSI | `bundle/msi/rplayer_<版本>_x64_en-US.msi` | 面向企业分发 / `msiexec` 静默部署 |
-| 便携 ZIP | 见第六节（CI 额外生成） | 解压即用、免安装 |
-| 裸 exe | `release/rplayer.exe` | 内嵌了界面的可执行文件，上面几种都由它派生 |
+| 形态 | 状态 | 路径 | 用途 |
+|------|------|------|------|
+| 裸 exe | 构建产物 | `target/release/rplayer.exe` | 内嵌界面的单文件可执行程序 |
+| **免安装 ZIP** | ✅ 当前发布 | `rplayer_<版本>_windows_x64_portable.zip`（仅含 exe） | 解压即用、库随 exe 走 |
+| NSIS 安装向导 | ⏸ 默认关闭 | `target/release/bundle/nsis/*-setup.exe` | 双击安装、带卸载器 |
+| MSI | ⏸ 默认关闭 | `target/release/bundle/msi/*.msi` | 企业分发 / `msiexec` 静默部署 |
 
-## 二、NSIS 安装程序本质
+## 二、NSIS 安装程序本质（备用）
 
 NSIS（Nullsoft Scriptable Install System）是 Windows 老牌安装程序生成器。工作方式类似编译器，只是"源码"是一段描述**装什么、装到哪、建哪些快捷方式、写哪些注册表**的 `.nsi` 脚本：
 

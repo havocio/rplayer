@@ -3,7 +3,7 @@
 一个用 **Rust + Tauri v2** 打造的轻量无损音乐播放器，对标 foobar2000 的核心体验。
 界面为现代深色玻璃拟态，**音频引擎完全在 Rust 侧**（解码与声卡输出不经过前端），体积小、启动快、格式覆盖广。
 
-> 不想从源码编译？到本仓库右侧的 **Releases** 页下载 Windows 安装包（NSIS `.exe` / MSI），双击安装即可。安装包由 GitHub Actions 在推 `v*` 标签时自动构建发布。
+> 不想从源码编译？到本仓库右侧的 **Releases** 页下载 **Windows 免安装 ZIP**，解压后直接运行 `rplayer.exe`（需系统 WebView2，Win10/11 自带）。ZIP 由 GitHub Actions 在推 `v*` 标签时自动构建发布。
 
 ## 特性
 
@@ -37,12 +37,12 @@
 npm install
 npm run tauri dev
 
-# 本地打包（生成安装包；产物在 target/release/bundle/）
-npm run tauri build
+# 构建 exe（当前只出免安装包，不打 NSIS/MSI；CI 会把 exe 压成 ZIP 发布）
+npm run tauri build -- --no-bundle
 ```
 
-> 注意：直接 `cargo build --release` 产出的 exe **不含前端界面**（会显示空白/未连接）。
-> 要用 `npm run tauri build`，或给 cargo 加上 `--features custom-protocol`。详见下方文档链接。
+> 产物 `target/release/rplayer.exe` 已内嵌前端界面，可直接运行；免安装 ZIP 由 CI 自动打包发布。
+> 注意：直接 `cargo build --release`（不加 `--features custom-protocol`）产出的 exe 不含界面，会显示空白/未连接。详见 [docs/development.md](docs/development.md)。
 
 ## 项目结构
 

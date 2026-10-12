@@ -1,5 +1,5 @@
-# 推 v* tag → 自动构建 Windows 安装包(NSIS/MSI) + 便携 ZIP，并以「草稿 Release」挂到 GitHub，
-# 由你手动点 Publish 正式发布。
+# 推 v* tag → 构建 Windows 免安装便携 ZIP（仅 rplayer.exe）→ 以草稿 Release 发布。
+# 说明：当前只发免安装 ZIP，不打 NSIS/MSI 安装包（tauri.conf.json 里 bundle.active=false）。
 name: Release
 
 on:
@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   release-windows:
-    name: Build & publish (Windows 10/11)
+    name: Build portable ZIP (Windows 10/11)
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -33,47 +33,29 @@ jobs:
       - name: Install JS deps
         run: npm ci
 
-      # (A) 官方 tauri-action 一步完成：npm run tauri build（内部 vite build + custom-protocol 内嵌 +
-      #     makensis/candle 产 NSIS、MSI）+ 自动把标准 bundle 产物上传到该 tag 的 Release。
-      #     好处：无需自己写 target/release/bundle 路径，tauri 布局由 action 内部解析。
-      - name: Build installers & publish draft release
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "rplayer ${{ github.ref_name }}"
-          releaseBody: |
-            Windows 10 / 11。按需下载：
+      # 只编译 exe（--no-bundle 跳过打包器）；release+custom-protocol 会把前端内嵌进 exe
+      - name: Build exe (no installer)
+        run: npm run tauri build -- --no-bundle
 
-            - **NSIS 安装向导**（推荐）：`rplayer_<版本>_x64-setup.exe`
-            - **MSI**（适合企业分发）：`rplayer_<版本>_x64_en-US.msi`
-            - **便携 ZIP**（解压即用、免安装）：`rplayer_<版本>_windows_x64_portable.zip`
-
-            运行需 WebView2（Win10/11 自带）。安装包未做代码签名，首次运行如遇 SmartScreen，选择「更多信息 → 仍要运行」。
-          releaseDraft: true
-          prerelease: false
-          args: --bundles nsis,msi
-
-      # (B) 绿色便携包：把内嵌了界面的单个 exe + 说明文档压成 ZIP（配置写注册表/AppData，非破坏式）。
-      - name: Package portable ZIP
+      # 便携 ZIP：只放纯净的 rplayer.exe，不含任何 .md 文档
+      - name: Package portable ZIP (exe only)
         shell: pwsh
         run: |
           $version = "${{ github.ref_name }}" -replace '^v', ''
-          $stage   = "portable"
-          Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue
-          New-Item -ItemType Directory -Path $stage | Out-Null
-          Copy-Item target/release/rplayer.exe $stage/
-          foreach ($doc in "README.md", "LICENSE-MIT", "CHANGELOG.md") {
-            if (Test-Path $doc) { Copy-Item $doc "$stage/$doc" }
-          }
           $zip = "rplayer_${version}_windows_x64_portable.zip"
-          Compress-Archive -Path "$stage/*" -DestinationPath $zip -Force
+          Compress-Archive -Path "target/release/rplayer.exe" -DestinationPath $zip -Force
           Get-Item $zip | Select-Object Name, @{n='MB';e={[math]::Round($_.Length/1MB,2)}}
 
-      # 把便携 ZIP 追加到同一 tag 的（草稿）Release 上。
-      - name: Attach portable ZIP to release
+      - name: Publish GitHub Release (draft)
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
+          name: rplayer ${{ github.ref_name }}
+          generate_release_notes: true
+          draft: true # 生成草稿，由你手动 Publish
+          prerelease: false
+          body: |
+            Windows 10 / 11 免安装便携版。解压后直接运行 `rplayer.exe`
+            （需系统 WebView2，Win10/11 自带；未做代码签名，如遇 SmartScreen 选「更多信息 → 仍要运行」）。
+            音乐库会持久化到 `rplayer.exe` 同级的 `library.json`。
           files: rplayer_*_windows_x64_portable.zip

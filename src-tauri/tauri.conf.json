@@ -29,20 +29,10 @@
     }
   },
   "bundle": {
-    "active": true,
-    "targets": ["nsis", "msi"],
+    "active": false,
     "category": "Music",
     "publisher": "rplayer",
     "copyright": "© 2026 rplayer contributors",
-    "shortDescription": "轻量无损音乐播放器",
-    "longDescription": "Rust + Tauri 打造的轻量无损音乐播放器，支持 FLAC / WAV / APE 等格式。",
-    "windows": {
-      "nsis": {
-        "installMode": "currentUser",
-        "languages": ["English", "SimpChinese"],
-        "displayLanguageSelector": true
-      }
-    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

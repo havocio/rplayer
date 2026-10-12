@@ -28,36 +28,34 @@ cargo test -p player-core -- --ignored    # 真实声卡：播放/暂停/seek/�
 
 ## 打包发布（本机）
 
-> 安装包的原理、离线出包与验证清单见 [packaging.md](packaging.md)。
+> 当前**只发免安装 ZIP**（纯净 `rplayer.exe`），不打 NSIS/MSI 安装包（`tauri.conf.json` 里 `bundle.active=false`）。安装包原理仍记录在 [packaging.md](packaging.md) 备用。
 
-在**仓库根目录**执行；它会先 `vite build` 生成 `frontend/dist`，再用 `custom-protocol` 把前端内嵌进 exe，并产出安装包：
+在**仓库根目录**构建 exe（先 `vite build` 生成 `frontend/dist`，再用 `custom-protocol` 内嵌进 exe）：
 
 ```bash
-npm run tauri build
-# 因为是 cargo workspace，产物在【仓库根】target/ 下：
-#   target/release/rplayer.exe
-#   target/release/bundle/nsis/*.exe   (NSIS 安装向导，推荐)
-#   target/release/bundle/msi/*.msi    (MSI)
+npm run tauri build -- --no-bundle
+# 产物（cargo workspace → 仓库根 target/）：
+#   target/release/rplayer.exe   ← 单文件、含界面，可直接运行
 ```
 
-> ⚠️ 常见坑 1：直接 `cargo build --release` 不加 `--features custom-protocol`，产出的 exe **不含前端界面**，双击显示空白 / "未连接"。要用 `npm run tauri build`，或手动：
+打成免安装 ZIP（只放 exe，不含任何 .md）：
+
+```powershell
+Compress-Archive -Path target/release/rplayer.exe -DestinationPath rplayer_0.1.0_windows_x64_portable.zip -Force
+```
+
+> ⚠️ 常见坑：直接 `cargo build --release` 不加 `--features custom-protocol`，产出的 exe **不含前端界面**，双击显示空白 / "未连接"。要用 `npm run tauri build`，或手动：
 > ```bash
 > npm run build                                            # 生成 frontend/dist
 > cargo build --release -p rplayer --features custom-protocol
 > ```
 > 验证内嵌成功：exe 二进制里能搜到 `assets/index…` 这类前端指纹串。
 
-> ⚠️ 常见坑 2：`tauri build` 打安装包时会**联网从 GitHub 下载 NSIS / WiX 打包工具**（`nsis-*.zip`、`Wix*.zip`）。若出网受限会报 `failed to bundle project: timeout: global`（此时 exe 已编译成功，只是安装包没生成）。三种应对：
->
-> 1. 直接交给 CI（`windows-latest` runner 下载很快，见下一节）；
-> 2. 挂代理后重试；
-> 3. 首次下载成功后 Tauri 会缓存到 `%LOCALAPPDATA%\tauri\`，之后可离线复用。
+## 发布到 GitHub Releases（自动出免安装 ZIP）
 
-## 发布到 GitHub Releases（自动出安装包）
+`.github/workflows/release.yml`：推 `v*` tag → 在 `windows-latest` 上 `tauri build --no-bundle` 出 exe → `Compress-Archive` 只把 `rplayer.exe` 压成 ZIP → 以**草稿 Release** 挂上。你到 Releases 页点 **Publish release** 正式发布；用户从 Releases 下载 ZIP、解压即用，无需编译。
 
-安装包由 `.github/workflows/release.yml` 自动构建：推一个 `v*` tag，Actions 会在 `windows-latest` 上用官方 `tauri-apps/tauri-action` 构建（内部完成 `vite build` + `custom-protocol` 内嵌 + NSIS/MSI 打包），并把 **NSIS `.exe`、MSI、以及便携 ZIP** 挂到该 tag 的 **草稿 Release** 上。你到 Releases 页确认无误后点 **Publish release** 即正式发布；用户从 Releases 下载安装包、无需自己编译。
-
-> 便携 ZIP = 内嵌了界面的单个 `rplayer.exe` + 文档，解压即用、免安装（配置写入 AppData/注册表，属非破坏式）。
+> 音乐库持久化文件 `library.json` 写在 `rplayer.exe` 同级目录，便携包解压到哪、库就跟到哪。
 
 首次接入步骤（在本机执行）：
 
