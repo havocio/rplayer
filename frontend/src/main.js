@@ -35,6 +35,9 @@ const els = {
   preamp: $("preamp"),
   preampVal: $("preamp-val"),
   clipGuard: $("clipguard"),
+  settingsBtn: $("settings-btn"),
+  settingsModal: $("settings-modal"),
+  settingsClose: $("settings-close"),
 };
 
 // ---- state ------------------------------------------------------------------
@@ -445,6 +448,19 @@ els.preamp.addEventListener("input", (e) => {
 els.preamp.addEventListener("change", (e) => act(invoke)("set_preamp", { db: +e.target.value })());
 els.clipGuard.addEventListener("change", (e) => act(invoke)("set_clip_guard", { on: e.target.checked })());
 
+// ---- settings modal ---------------------------------------------------------
+const openSettings = () => {
+  els.settingsModal.hidden = false;
+};
+const closeSettings = () => {
+  els.settingsModal.hidden = true;
+};
+els.settingsBtn.addEventListener("click", openSettings);
+els.settingsClose.addEventListener("click", closeSettings);
+els.settingsModal.addEventListener("click", (e) => {
+  if (e.target.hasAttribute("data-close")) closeSettings();
+});
+
 els.seek.addEventListener("input", (e) => {
   scrubbing = true;
   els.timeCur.textContent = fmt(+e.target.value);
@@ -457,6 +473,10 @@ els.seek.addEventListener("change", (e) => {
 });
 
 window.addEventListener("keydown", (e) => {
+  if (e.code === "Escape") {
+    closeSettings();
+    return;
+  }
   if (["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) return;
   if (e.code === "Space") {
     e.preventDefault();

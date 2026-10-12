@@ -13,6 +13,9 @@
           <div class="brand">
             <span class="logo" aria-hidden="true"></span>
             <h1>rplayer</h1>
+            <button id="settings-btn" class="icon-btn gear" title="设置" aria-label="设置">
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.48.48 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6a3.6 3.6 0 1 1 0-7.2 3.6 3.6 0 0 1 0 7.2z"/></svg>
+            </button>
           </div>
           <div class="add-btns">
             <button id="add-files" class="chip" title="添加文件">＋ 文件</button>
@@ -68,19 +71,43 @@
               <input id="volume" class="range vol-range" type="range" min="0" max="100" value="100" step="1" />
             </div>
           </div>
+        </section>
+      </main>
+    </div>
 
-          <div class="rg-row">
-            <span class="rg-title">响度均衡</span>
+    <!-- Settings modal -->
+    <div id="settings-modal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <div class="modal-panel" role="dialog" aria-modal="true" aria-label="设置">
+        <div class="modal-head">
+          <h2>设置</h2>
+          <button id="settings-close" class="icon-btn" title="关闭" aria-label="关闭">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+          </button>
+        </div>
+        <div class="modal-body">
+          <section class="setting">
+            <div class="setting-label">响度均衡（ReplayGain）</div>
             <div class="seg" id="rg-seg" role="group" aria-label="ReplayGain 模式">
               <button type="button" class="seg-btn" data-rg="off">关</button>
               <button type="button" class="seg-btn" data-rg="album">专辑</button>
               <button type="button" class="seg-btn" data-rg="track">单曲</button>
             </div>
-            <label class="rg-pre">前级<input id="preamp" class="range pre-range" type="range" min="-12" max="12" step="0.5" value="0" /><span id="preamp-val" class="rg-val">0.0 dB</span></label>
-            <label class="rg-chk"><input id="clipguard" type="checkbox" checked />防削波</label>
-          </div>
-        </section>
-      </main>
+            <p class="setting-hint">“关”为逐比特直出；“专辑 / 单曲”按文件标签把响度归一，无标签的曲目不受影响。</p>
+          </section>
+          <section class="setting">
+            <div class="setting-label">前级</div>
+            <div class="rg-pre">
+              <input id="preamp" class="range pre-range" type="range" min="-12" max="12" step="0.5" value="0" />
+              <span id="preamp-val" class="rg-val">0.0 dB</span>
+            </div>
+            <p class="setting-hint">在 ReplayGain 之上整体抬升或压低输出电平。</p>
+          </section>
+          <section class="setting">
+            <label class="rg-chk"><input id="clipguard" type="checkbox" checked /> 防削波（按峰值限幅，避免爆音）</label>
+          </section>
+        </div>
+      </div>
     </div>
 
     <script type="module" src="/src/main.js"></script>
