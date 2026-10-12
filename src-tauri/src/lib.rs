@@ -40,6 +40,14 @@ struct Persisted {
     library: Vec<Track>,
     queue: Vec<Track>,
     index: usize,
+    /// Last used volume (0.0..=1.0), restored on startup. Defaults to 1.0 for
+    /// older files that predate this field.
+    #[serde(default = "default_volume")]
+    volume: f32,
+}
+
+fn default_volume() -> f32 {
+    1.0
 }
 
 /// Payload for cover art: raw bytes + MIME, so the frontend can build a Blob URL
@@ -59,13 +67,13 @@ impl App {
     fn persist(&self, app: &AppHandle) {
         let sources = self.sources.lock().unwrap_or_else(|p| p.into_inner()).clone();
         let library = self.library.lock().unwrap_or_else(|p| p.into_inner()).clone();
-        let (queue, index) = self
+        let (queue, index, volume) = self
             .engine
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .as_ref()
-            .map(|e| (e.queue().to_vec(), e.index()))
-            .unwrap_or((Vec::new(), usize::MAX));
+            .map(|e| (e.queue().to_vec(), e.index(), e.volume()))
+            .unwrap_or((Vec::new(), usize::MAX, 1.0));
         write_persisted(
             app,
             &Persisted {
@@ -73,6 +81,7 @@ impl App {
                 library,
                 queue,
                 index,
+                volume,
             },
         );
     }
@@ -124,6 +133,7 @@ fn default_persisted() -> Persisted {
         library: Vec::new(),
         queue: Vec::new(),
         index: usize::MAX,
+        volume: 1.0,
     }
 }
 
@@ -393,6 +403,7 @@ pub fn run() {
             let data = load_persisted(app.handle());
             let engine = match PlayerEngine::new() {
                 Ok(mut e) => {
+                    e.set_volume(data.volume);
                     if !data.queue.is_empty() {
                         e.set_queue(data.queue.clone());
                         e.set_index(data.index);
