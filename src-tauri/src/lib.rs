@@ -10,7 +10,9 @@
 //!   model.
 //!
 //! Both, plus the added source folders and the selected index, persist to
-//! `<app_data_dir>/library.json` so the library and current album survive restarts.
+//! `library.json` next to the executable (portable-friendly; falls back to the OS
+//! app-data dir if the exe directory isn't writable) so the library and current
+//! album survive restarts.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -55,12 +57,6 @@ fn engine_err() -> String {
 
 impl App {
     fn persist(&self, app: &AppHandle) {
-        let Some(path) = library_file(app) else {
-            return;
-        };
-        if let Some(dir) = path.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
         let sources = self.sources.lock().unwrap_or_else(|p| p.into_inner()).clone();
         let library = self.library.lock().unwrap_or_else(|p| p.into_inner()).clone();
         let (queue, index) = self
@@ -70,15 +66,15 @@ impl App {
             .as_ref()
             .map(|e| (e.queue().to_vec(), e.index()))
             .unwrap_or((Vec::new(), usize::MAX));
-        let data = Persisted {
-            sources,
-            library,
-            queue,
-            index,
-        };
-        if let Ok(json) = serde_json::to_string(&data) {
-            let _ = std::fs::write(path, json);
-        }
+        write_persisted(
+            app,
+            &Persisted {
+                sources,
+                library,
+                queue,
+                index,
+            },
+        );
     }
 
     /// Run a transport action on the engine, then persist and return a snapshot.
@@ -98,22 +94,62 @@ impl App {
 }
 
 // ---- persistence ------------------------------------------------------------
+//
+// The library lives next to the executable (`<exe dir>/library.json`) so the
+// portable build is fully self-contained. If that directory isn't writable
+// (e.g. a perMachine install under Program Files), we fall back to the OS app
+// data dir. Reads check both, preferring the one that already has data.
 
-fn library_file(app: &AppHandle) -> Option<PathBuf> {
-    let dir = app.path().app_data_dir().ok()?;
-    Some(dir.join("library.json"))
+fn exe_dir() -> Option<PathBuf> {
+    let mut p = std::env::current_exe().ok()?;
+    p.pop(); // drop the file name -> directory
+    Some(p)
+}
+
+/// Candidate `library.json` paths, in priority order (portable first).
+fn candidate_files(app: &AppHandle) -> Vec<PathBuf> {
+    let mut v = Vec::new();
+    if let Some(d) = exe_dir() {
+        v.push(d.join("library.json"));
+    }
+    if let Ok(d) = app.path().app_data_dir() {
+        v.push(d.join("library.json"));
+    }
+    v
+}
+
+fn default_persisted() -> Persisted {
+    Persisted {
+        sources: Vec::new(),
+        library: Vec::new(),
+        queue: Vec::new(),
+        index: usize::MAX,
+    }
 }
 
 fn load_persisted(app: &AppHandle) -> Persisted {
-    library_file(app)
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .and_then(|s| serde_json::from_str::<Persisted>(&s).ok())
-        .unwrap_or(Persisted {
-            sources: Vec::new(),
-            library: Vec::new(),
-            queue: Vec::new(),
-            index: usize::MAX,
-        })
+    for path in candidate_files(app) {
+        if let Ok(s) = std::fs::read_to_string(&path) {
+            if let Ok(data) = serde_json::from_str::<Persisted>(&s) {
+                return data;
+            }
+        }
+    }
+    default_persisted()
+}
+
+fn write_persisted(app: &AppHandle, data: &Persisted) {
+    let Ok(json) = serde_json::to_string(data) else {
+        return;
+    };
+    for path in candidate_files(app) {
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if std::fs::write(&path, &json).is_ok() {
+            return; // first writable location wins (exe dir preferred)
+        }
+    }
 }
 
 /// Recursively scan `dir` and build tracks, skipping paths already in `existing`.

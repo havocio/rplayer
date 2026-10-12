@@ -90,7 +90,7 @@ Copy-Item README.md,LICENSE-MIT,CHANGELOG.md portable/
 Compress-Archive -Path portable/* -DestinationPath rplayer_${version}_windows_x64_portable.zip -Force
 ```
 
-要点：便携包里的 exe **必须是 `custom-protocol` 构建**，否则双击同样是"未连接"空白。rplayer 的配置写 `AppData`/注册表（`currentUser` 安装），属非破坏式，因此单 exe 便携可用。
+要点：便携包里的 exe **必须是 `custom-protocol` 构建**，否则双击同样是"未连接"空白。音乐库持久化文件 `library.json` 默认写在 **exe 同级目录**（便携友好，库跟着 exe 走）；若该目录不可写（如 perMachine 装到 Program Files），自动回退到系统 app-data 目录。
 
 ## 七、验证安装包能用的清单
 
