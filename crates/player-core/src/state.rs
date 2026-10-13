@@ -57,7 +57,7 @@ pub struct Snapshot {
     pub index: usize,
     pub queue_len: usize,
     pub current: Option<Track>,
-    pub replay_gain: ReplayGainMode,
+    pub replay_gain_mode: ReplayGainMode,
     pub preamp_db: f32,
     pub clip_guard: bool,
 }
@@ -74,7 +74,7 @@ impl Snapshot {
             index: usize::MAX,
             queue_len: 0,
             current: None,
-            replay_gain: ReplayGainMode::Off,
+            replay_gain_mode: ReplayGainMode::Off,
             preamp_db: 0.0,
             clip_guard: true,
         }

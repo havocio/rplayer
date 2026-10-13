@@ -393,7 +393,7 @@ impl PlayerEngine {
             index: self.index,
             queue_len: self.queue.len(),
             current,
-            replay_gain: self.rg_mode,
+            replay_gain_mode: self.rg_mode,
             preamp_db: self.preamp_db,
             clip_guard: self.clip_guard,
         }
