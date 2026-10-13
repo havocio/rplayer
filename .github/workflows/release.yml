@@ -53,7 +53,8 @@ jobs:
           name: rplayer ${{ github.ref_name }}
           generate_release_notes: true
           draft: true # 生成草稿，由你手动 Publish
-          prerelease: false
+          # v0.x 视为开发测试版（pre-release）；到 v1.0.0 起自动变为正式版
+          prerelease: ${{ startsWith(github.ref_name, 'v0.') }}
           body: |
             Windows 10 / 11 免安装便携版。解压后直接运行 `rplayer.exe`
             （需系统 WebView2，Win10/11 自带；未做代码签名，如遇 SmartScreen 选「更多信息 → 仍要运行」）。

@@ -2,9 +2,9 @@
 
 遵循 Keep a Changelog 与 SemVer。安装包的下载入口在 Releases 页面。
 
-## v0.1.0
+## v0.1.0（开发测试版 / Pre-release）
 
-首个可安装版本（仅 Windows 10 / 11）。
+开发测试版本，仅 Windows 10 / 11，以**免安装 ZIP**（纯净 `rplayer.exe`）分发。功能仍在完善，正式版计划为 v1.0.0。
 
 新增：
 
